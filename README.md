@@ -51,8 +51,6 @@ pip install palettable peakutils colorama
 pip install pandas numpy scipy matplotlib palettable peakutils colorama
 ```
 
-> **Note:** The script currently imports `torch` (`from torch.backends.quantized import engine`), but this is unused. PyTorch is not required for core functionality.
-
 ---
 
 ## Usage
@@ -116,10 +114,10 @@ Fields are parsed automatically for batch number, composition, condition, and in
 ## Examples
 
 ### GIWAXS — waterfall plot (NbAlCu, 10 annealing temperatures)
-![GIWAXS example](figures/STb45-05_NbAlCu_PTAex30M_th0.5_0-6.png)
+<img src="figures/STb45-05_NbAlCu_PTAex30M_th0.5_0-6.png" alt="GIWAXS example" width="450">
 
 ### GISAXS — Peak Enhanced mode (NbAl, 4 annealing conditions)
-![GISAXS Peak Enhanced example](figures/b33-NbAl-SP-th0.2%20Peak%20Enhanced.png)
+<img src="figures/b33-NbAl-SP-th0.2%20Peak%20Enhanced.png" alt="GISAXS Peak Enhanced example" width="450">
 
 ---
 

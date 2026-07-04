@@ -1,33 +1,37 @@
 """
-File: CMS GIWAXS AND GISAXS
-Name: Cheng-Chu Chung
-TODO: Auto import ref peaks from PDF card data, then put data into dictionary
-----------------------------------------
-Color palettes for Python: https://jiffyclub.github.io/palettable/#palette-interface
+CMS GIWAXS & GISAXS plotting / analysis
+Author: Cheng-Chu Chung
+
+Reads 1D scattering files (.dat from CMS, or .xy from Dioptas) and produces
+publication-style I(q) plots. All run options (paths, palette, axis ranges,
+GISAXS mode, background subtraction, etc.) are set at the top of this file and
+in the companion .ini config file - see README.md for details.
+
+TODO: Auto-import reference peaks from PDF card data into a dictionary.
+Palettes: https://jiffyclub.github.io/palettable/#palette-interface
 """
 
 from pathlib import Path
-from collections import defaultdict
-import pandas as pd
-from pprint import pprint
-from scipy.interpolate import CubicSpline
-from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy import stats
-from scipy import signal
 import configparser
-import palettable as pltt
-import peakutils
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+from scipy.optimize import curve_fit
 import matplotlib
-import sys
-from colorama import Fore, Back, Style, init
+import matplotlib.pyplot as plt
+import palettable as pltt              # noqa: F401 - referenced indirectly via eval() in the .ini config
+import peakutils
+from colorama import Fore, Style, init
 
-from torch.backends.quantized import engine
+# Enable ANSI colour output in the Windows terminal (harmless on macOS/Linux)
+init()
 
-print("Before, Backend used by matplotlib is: ", matplotlib.get_backend())
+# matplotlib backend: 'wxAgg' opens an interactive window. If you hit a backend
+# error, comment out the next line to fall back to your system default.
+print("Backend used by matplotlib (before):", matplotlib.get_backend())
 matplotlib.rcParams['backend'] = 'wxAgg'
-print("After, Backend used by matplotlib is: ", matplotlib.get_backend())
+print("Backend used by matplotlib (after): ", matplotlib.get_backend())
 
 # Step 1: Give your data directory
 # GISAXS
@@ -62,49 +66,75 @@ else:
     print("Manually input so please remove all eval commands if error occurs or file is not found")
     print("-----------------")
 
+
+def cfg(section, key):
+    """
+    Read and evaluate one value from the .ini config, with a clear error message
+    if the key is missing or the expression is invalid.
+
+    Values in the .ini are Python expressions (tuples, lists, `pltt....` palette
+    objects, and even list comprehensions that reference SAMPLE_LIST), so we
+    eval() them in this module's namespace - identical behaviour to the old
+    `eval(CONFIG[section][key])`, just with friendlier failures.
+
+    :param section: .ini section name, e.g. 'format'
+    :param key: key within that section, e.g. 'palette'
+    :return: the evaluated Python object
+    """
+    try:
+        raw = CONFIG[section][key]
+    except KeyError:
+        raise SystemExit(f"[config] Missing '{key}' in section [{section}] of {CONFIG_FILE}")
+    try:
+        return eval(raw, globals())
+    except Exception as e:
+        raise SystemExit(f"[config] Could not parse [{section}] {key} = {raw!r}\n"
+                         f"         {type(e).__name__}: {e}")
+
+
 # FILE_TYPE = '.dat'                                                                                 # Archive - Check your file type
 SCANID_INDEX = -2                                                                                    # Use scan ID to sort the files <-----Please check your scan ID index-----
-PATTERN = eval(CONFIG['samples']['pattern'])
+PATTERN = cfg('samples', 'pattern')
 FILENAME_KEYWORD = '_xscan'                                                                          # Find the last index of the keyword in the filename  <-----Please check your file name keyword-----
 FILENAME_KEYWORD_OFFSET = 0                                                                          # "th"0.250 <-----Please check your file name keyword offset-----
 LEGEND_HEAD_KEYWORD = 'th'
 LEGEND_TAIL_KEYWORD = '_5.00s'                                                                  # If you want to use the legend head and tail keyword, please set them here
-ANGLE_RANGE = eval(CONFIG['samples']['angle_range'])
-SAMPLE_LIST = eval(CONFIG['samples']['sample_list'])
+ANGLE_RANGE = cfg('samples', 'angle_range')
+SAMPLE_LIST = cfg('samples', 'sample_list')                                                          # Must stay above SAMPLE_LABEL: label expressions may reference SAMPLE_LIST
 SAXS_COLUMN_NAME = ['#', 'qr', 'I']                                                                  # May be updated
 WAXS_COLUMN_NAME = ['#', 'q', 'qerr', 'I(q)', 'I(q)err']                                             # 2024-3 update to data_dict['I_list'][index] = dataframe[:, 2]
 # WAXS_COLUMN_NAME = ['#', 'q', 'I(q)err', 'q']                                                      # May be updated, then update: data_dict['I_list'][index] = dataframe[:, 1]
 # WAXS_COLUMN_NAME = ['#', 'q', 'qerr', 'I(q)']                                                      # Before 2023
 DIOPTAS_COLUMN_NAME = ['#', 'q_A^-1', 'I']
-FIGURE_SIZE = eval(CONFIG['format']['figure_size'])
-BATCH_NUMBER, COMPOSITION, CONDITION, INCIDENT_ANGLE = eval(CONFIG['legends']['sample_condition'])   # Whether you want to show them in the legend
-PALETTE = eval(CONFIG['format']['palette'])                                                          # pld.Spectral_4_r  # _r if you want to reverse the color sequence
+FIGURE_SIZE = cfg('format', 'figure_size')
+BATCH_NUMBER, COMPOSITION, CONDITION, INCIDENT_ANGLE = cfg('legends', 'sample_condition')            # Whether you want to show them in the legend
+PALETTE = cfg('format', 'palette')                                                                   # e.g. pltt.colorbrewer.diverging.Spectral_4_r  (_r reverses the colours)
 CMAP = PALETTE.mpl_colormap                                                                          # .mpl_colormap attribute is a continuous, interpolated map
-COLOR_INCREMENT = eval(CONFIG['format']['color_increment'])                                          # Adjust your color gradient, 0 for default
-OFFSET = eval(CONFIG['format']['offset'])                                                            # Value you want to add to an y offset for each curve.
-SAMPLE_LABEL = eval(CONFIG['legends']['sample_label'])
-GISAXS_MODE = eval(CONFIG['data_processing']['gisaxs_mode'])
-FIRST_DATAPOINT = eval(CONFIG['data_processing']['first_datapoint'])
-XRANGE = eval(CONFIG['format']['xrange'])
-YRANGE = eval(CONFIG['format']['yrange'])
-LEGEND_LOCATION = eval(CONFIG['format']['legend_location'])
-TITLE = eval(CONFIG['format']['output_filename'])
-# OUTPUT_FOR_JADE = eval(CONFIG['format']['output_for_jade'])
-# IF_SAVE = eval(CONFIG['format']['if_save'])
-SUB_DEGREE = eval(CONFIG['data_processing']['bgsub_degree'])
+COLOR_INCREMENT = cfg('format', 'color_increment')                                                   # Adjust your color gradient, 0 for default
+OFFSET = cfg('format', 'offset')                                                                     # Value you want to add to an y offset for each curve.
+SAMPLE_LABEL = cfg('legends', 'sample_label')
+GISAXS_MODE = cfg('data_processing', 'gisaxs_mode')
+FIRST_DATAPOINT = cfg('data_processing', 'first_datapoint')
+XRANGE = cfg('format', 'xrange')
+YRANGE = cfg('format', 'yrange')
+LEGEND_LOCATION = cfg('format', 'legend_location')
+TITLE = cfg('format', 'output_filename')
+# OUTPUT_FOR_JADE = cfg('format', 'output_for_jade')
+# IF_SAVE = cfg('format', 'if_save')
+SUB_DEGREE = cfg('data_processing', 'bgsub_degree')
 
 
 def main():
-    files = Path(INPUT_PATH).glob(f'*{PATTERN}')  # Call Path again to grab the file
+    # Collect every file matching the configured pattern (e.g. '*.dat' / '*.xy')
+    # and sort by the scan-ID field in the filename so curves plot in scan order.
+    files = sorted(
+        Path(INPUT_PATH).glob(f'*{PATTERN}'),
+        key=lambda f: int(f.name.split('_')[SCANID_INDEX]),
+    )
 
-    if len(list(files)) == 0:
-        print("No files found, please check your input path or pattern")
+    if not files:
+        print("No files found - please check INPUT_PATH or 'pattern' in your .ini file")
         return
-    else:
-        files = Path(INPUT_PATH).glob(f'*{PATTERN}')    # Call Path again to grab the file
-
-        # Sort the filename by scan ID:
-        files = sorted(files, key=lambda x: int(x.name.split('_')[SCANID_INDEX]))
 
     if OUTPUT_FOR_JADE:
         OUTPUT_PATH.mkdir(exist_ok=True)  # Creates the folder only if it doesn't exist
@@ -138,6 +168,29 @@ def gisaxs(files):
     gisaxs_plot(q_and_I_list, mode=GISAXS_MODE)
 
 
+def read_table_robust(path, **kwargs):
+    """
+    Read a whitespace-delimited data file, trying several text encodings.
+
+    CMS/Dioptas files occasionally carry non-UTF-8 bytes in their header lines,
+    which makes a plain pd.read_table() crash. We try the most common encodings
+    in turn and, as a last resort, replace any undecodable characters so the
+    numeric data can still be loaded.
+
+    :param path: file path to read
+    :param kwargs: any keyword arguments forwarded to pandas.read_table
+    :return: pandas.DataFrame
+    """
+    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin1"):
+        try:
+            return pd.read_table(path, encoding=enc, **kwargs)
+        except UnicodeDecodeError:
+            continue
+    # Last resort: replace any byte we still can't decode
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return pd.read_table(f, **kwargs)
+
+
 def sorted_data(files, mode=ANGLE_RANGE):
     data_dict = {'q_list': {}, 'I_list': {},'filename_list': {}, 'background_subtraction_list': {}}   # Create a dictionary to store all information
     for index, file in enumerate(files):
@@ -145,74 +198,33 @@ def sorted_data(files, mode=ANGLE_RANGE):
         data_dict['filename_list'][index] = scattering_data.name
         print(f'{index:>2} {scattering_data.name}')
         if mode == 'wide':
-            # dataframe = pd.read_table(scattering_data, sep="\s+",
-            #                           usecols=WAXS_COLUMN_NAME).to_numpy() \
-            #     if scattering_data.suffix == ".dat" \
-            #     else pd.read_table(scattering_data, sep="\s+", usecols=DIOPTAS_COLUMN_NAME, skiprows=22).to_numpy() \
-            #     # '#' is q column and 'qerr' is I(q) column
-            # data_dict['q_list'][index] = dataframe[:, 0]
-            # data_dict['I_list'][index] = dataframe[:, 2]          # WAXS column may be different
+            # GIWAXS/MAXS files: q is always column 0. The intensity column
+            # depends on the source - .dat (CMS native) puts I(q) in column 2,
+            # while .xy (Dioptas export) puts it in column 1.
+            intensity_col_index = 2 if scattering_data.suffix == ".dat" else 1
 
-            # Determine which columns to use and how many rows to skip based on file extension
-            if scattering_data.suffix == ".dat":
-                columns_to_use = WAXS_COLUMN_NAME                   # WAXS column may be different
-                skip_rows = 0
-                intensity_col_index = 2                             # I(q) is in the third column
-            else:
-                columns_to_use = DIOPTAS_COLUMN_NAME
-                skip_rows = 22
-                intensity_col_index = 1                             # I(q) is in the second column
+            # Read whitespace-delimited numbers, ignoring any '#' comment/header
+            # lines. read_table_robust() retries several encodings so a stray
+            # non-UTF-8 byte in the header can't crash the load.
+            data_array = read_table_robust(
+                scattering_data, sep=r"\s+", comment="#", header=None
+            ).to_numpy()
 
-            # Read the file into a DataFrame
-            # df = pd.read_table(
-            #     scattering_data,
-            #     sep=r"\s+",
-            #     # usecols=columns_to_use,
-            #     # skiprows=skip_rows,
-            #     comment="#",                # Skip comment lines starting with #
-            #     header=None,                # Don't use the first row as column headers
-            #     names=columns_to_use[1:],   # Use the second column name as header
-            #     index_col=False             # Ensure the first column is not used as the index
-            # )
-
-            def read_table_robust(path, **kwargs):
-                for enc in ("utf-8", "utf-8-sig", "cp1252", "latin1"):
-                    try:
-                        return pd.read_table(path, encoding=enc, **kwargs)
-                    except UnicodeDecodeError:
-                        pass
-                # last resort: replace undecodable characters
-                with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    return pd.read_table(f, **kwargs)
-
-            df = read_table_robust(scattering_data, sep=r"\s+", comment="#", header=None)
-
-            # Convert DataFrame to NumPy array
-            data_array = df.to_numpy()
-
-            # Extract q and I(q) values
-            q_values = data_array[:, 0]
-            intensity_values = data_array[:, intensity_col_index]
-
-            # Store the results in the dictionary
-            data_dict['q_list'][index] = q_values
-            data_dict['I_list'][index] = intensity_values
+            data_dict['q_list'][index] = data_array[:, 0]
+            data_dict['I_list'][index] = data_array[:, intensity_col_index]
 
             if OUTPUT_FOR_JADE:
-                    out_file(data_dict['q_list'][index], data_dict['I_list'][index], f'C_{scattering_data.name}')
+                out_file(data_dict['q_list'][index], data_dict['I_list'][index], f'C_{scattering_data.name}')
 
         elif mode == 'small':
-            dataframe = pd.read_table(scattering_data, sep="\s+",
-                                      usecols=SAXS_COLUMN_NAME) \
-                .to_numpy()  # '#' is q column and 'qerr' is I(q) column
+            # GISAXS files: use the named columns ('#', 'qr', 'I').
+            dataframe = read_table_robust(
+                scattering_data, sep=r"\s+", usecols=SAXS_COLUMN_NAME
+            ).to_numpy()
 
-            # q^2 may include the negative q range so we do a filter
-            data_dict['q_list'][index] = dataframe[FIRST_DATAPOINT:, 0]
-            # Find the index to have the same shape for y dataframe
-            data_dict['I_list'][index] = dataframe[FIRST_DATAPOINT:, 1]
-
-        # if index == 0:
-        #     pprint(data_dict)
+            # Skip the first FIRST_DATAPOINT rows to drop the beam-stop / negative-q region
+            data_dict['q_list'][index] = dataframe[FIRST_DATAPOINT:, 0]  # q (column 0)
+            data_dict['I_list'][index] = dataframe[FIRST_DATAPOINT:, 1]  # I(q) (column 1)
 
     return data_dict
 
@@ -242,8 +254,6 @@ def background_subtraction(q_and_I_list, degree=3):
 def giwaxs_plot(q_and_I_list, mode='raw'):
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     title = TITLE
-    y_max_lim = 0
-    y_min_lim = 10000
     y = 0   # Initial value
     increment = 0
     print('\n=============================================')
@@ -292,10 +302,6 @@ def giwaxs_plot(q_and_I_list, mode='raw'):
         color_idx = np.linspace(0, 1, len(SAMPLE_LIST) + COLOR_INCREMENT)
         plt.plot(x, y + OFFSET * increment, linewidth=2, color=CMAP(color_idx[increment+COLOR_INCREMENT]), label=plot_label)  # full info
         increment += 1
-        if y.max() > y_max_lim:
-            y_max_lim = y.max()
-        if y.min() < y_min_lim:
-            y_min_lim = y.min()
 
     print(f'Total number of curves: {increment}')
 
@@ -332,8 +338,6 @@ def giwaxs_plot(q_and_I_list, mode='raw'):
 def gisaxs_plot(q_and_I_list, mode='Intensity', xrange=(0.004, 0.1), yrange=(0, 120)):
     fig, ax = plt.subplots(figsize=FIGURE_SIZE)
     title = TITLE
-    y_max_lim = 0
-    y_min_lim = 10000
     y = 0  # Initial value
     increment = 0
     print('\n=============================================')
@@ -407,10 +411,6 @@ def gisaxs_plot(q_and_I_list, mode='Intensity', xrange=(0.004, 0.1), yrange=(0, 
                  label=plot_label)  # full info
 
         increment += 1
-        if y.max() > y_max_lim:
-            y_max_lim = y.max()
-        if y.min() < y_min_lim:
-            y_min_lim = y.min()
 
     print(f'Total number of curves: {increment}')
 
