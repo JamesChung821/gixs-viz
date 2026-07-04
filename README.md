@@ -1,6 +1,6 @@
 # gixs-viz
 
-A Python visualization and analysis toolkit for **GIWAXS** (Grazing-Incidence Wide-Angle X-ray Scattering) and **GISAXS** (Grazing-Incidence Small-Angle X-ray Scattering) data collected at the CMS beamline.
+A Python visualization and analysis toolkit for **GIWAXS** (Grazing-Incidence Wide-Angle X-ray Scattering) and **GISAXS** (Grazing-Incidence Small-Angle X-ray Scattering) data collected at the [CMS beamline](https://www.bnl.gov/nsls2/beamlines/beamline.php?r=11-BM).
 
 ---
 
